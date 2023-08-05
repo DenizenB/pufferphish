@@ -1,0 +1,21 @@
+version: "2.1"
+services:
+  flaresolverr:
+    # DockerHub mirror flaresolverr/flaresolverr:latest
+    image: flaresolverr/flaresolverr:latest
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_HTML=${LOG_HTML:-false}
+      - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-none}
+      - TZ=Europe/London
+      - PORT=8080
+    ports:
+      - 8080
+    restart: unless-stopped
+  backend:
+    build: backend
+    ports:
+      - 127.0.0.1:1234:8080
+    restart: unless-stopped
+    depends_on:
+      - flaresolverr
