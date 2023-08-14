@@ -1,15 +1,18 @@
+import logging
 import random
+import string
+import time
 from base64 import b64encode
 from sys import stderr
 from typing import Dict, List, Optional, Any, ClassVar
 
 import requests
-import seleniumwire.undetected_chromedriver as chrome
-from flask import Flask, request, jsonify
-from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException
+import seleniumwire.undetected_chromedriver as uc
+from flask import Flask, request, jsonify, abort
+from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from seleniumwire.request import Request
 
@@ -57,9 +60,10 @@ class Flaresolverr:
             return {
                 'user_agent': solution.get('userAgent'),
                 'cookies': [{
-                    c['name']: c['value']
-                        for c in solution.get('cookies', [])
-                }]
+                    'name': c['name'],
+                    'value': c['value'],
+                } for c in solution.get('cookies', [])
+                ]
             }
 
         return {}
@@ -79,11 +83,12 @@ class VictimSimulator:
           - https://github.com/nf1s/selenium_phishing_detector
     """
 
-    xpath_username : ClassVar[str] = "//input[(@type='text' or @type='email') and not(@disabled)]"
-    xpath_password : ClassVar[str] = "//input[@type='password']"
+    sel_username : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled])"
+    sel_password : ClassVar[str] = "input[type='password']"
+    sel_ready : ClassVar[str] = "input"
 
     exfiltration : List[Dict[str, Any]]
-    browser : Optional[chrome.Chrome]
+    browser : Optional[uc.Chrome]
     solver : Flaresolverr
 
     def __init__(self, solver : Flaresolverr):
@@ -97,101 +102,79 @@ class VictimSimulator:
         solution = self.solver.solve(url)
 
         # Start up browser with the captcha solution
-        self._start(**solution)
-
-        # Visit the suspected phishing page
-        self.browser.get(url)
+        self._start(user_agent=solution.get('user_agent'))
 
         # Generate credentials and set up interception
         username, password = self._generate_credentials()
         self._intercept_exfiltration(username, password)
 
+        # Visit the suspected phishing page
+        self.browser.get(url)
+
+        # Cookies?
+        cookies = solution.get('cookies', [])
+        if cookies:
+            for cookie in cookies:
+                self.browser.add_cookie(cookie)
+
+            self.browser.get(url)
+
+        try:
+            app.logger.info("Waiting for input, up to 30 sec")
+            WebDriverWait(self.browser, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_ready))
+            )
+        except TimeoutException:
+            app.logger.info("Timed out waiting for username input")
+
         # Enter the credentials
         self._submit_credentials(username, password)
 
         # Close browser and return
+        app.logger.info("Quitting browser")
+        self.browser.quit()
+        self.browser = None
 
+    def _start(self, user_agent : Optional[str] = None):
+        """Starts a Chrome browser with given user-agent"""
 
-    def _submit_credentials(self, username, password):
-        password_inputs = self.browser.find_elements(By.XPATH, self.xpath_password)
-        can_enter_password = any(
-            input.is_displayed() and input.is_enabled()
-                for input in password_inputs
-        )
+        # undetected_chromedriver
+        options = uc.ChromeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--window-size=1920,1080')
+        # todo: this param shows a warning in chrome head-full
+        options.add_argument('--disable-setuid-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        # this option removes the zygote sandbox (it seems that the resolution is a bit faster)
+        options.add_argument('--no-zygote')
+        # attempt to fix Docker ARM32 build
+        options.add_argument('--disable-gpu-sandbox')
+        options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--ignore-certificate-errors')
+        options.add_argument('--ignore-ssl-errors')
+        # fix GL errors in ASUSTOR NAS
+        # https://github.com/FlareSolverr/FlareSolverr/issues/782
+        # https://github.com/microsoft/vscode/issues/127800#issuecomment-873342069
+        # https://peter.sh/experiments/chromium-command-line-switches/#use-gl
+        options.add_argument('--use-gl=swiftshader')
 
-        # Enter username, if possible
-        username_inputs = self.browser.find_elements(By.XPATH, self.xpath_username)
-        for input in username_inputs:
-            try:
-                print(f"Username input: {input}")
-
-                print("Clearing field")
-                input.send_keys(Keys.CONTROL + "a")
-                input.send_keys(Keys.DELETE)
-
-                print("Entering username")
-                input.send_keys(username)
-
-                if not can_enter_password:
-                    print("Waiting 2 seconds")
-                    WebDriverWait(self.browser, 2)
-
-                    print("Pressing enter in user input")
-                    input.send_keys(Keys.ENTER)
-
-                    print("Waiting 2 seconds")
-                    WebDriverWait(self.browser, 2)
-            except ElementNotVisibleException:
-                print(f"Potential user input not visible, skipping: {input}", file=stderr)
-
-        # Click continue if there's no visible password input
-
-        password_inputs = self.browser.find_elements(By.XPATH, self.xpath_password)
-        for input in password_inputs:
-            try:
-                print("Using password input: {input}")
-
-                print("Clearing field")
-                input.send_keys(Keys.CONTROL + "a")
-                input.send_keys(Keys.DELETE)
-
-                print("Entering password")
-                input.send_keys(password)
-
-                # Wait for 2 seconds
-                print("Waiting 2 seconds")
-                WebDriverWait(self.browser, 2)
-
-                # Submit form
-                print("Pressing enter in password input")
-                input.send_keys(Keys.ENTER)
-
-                # Wait until the password input is no longer part of the DOM, timout after 5 sec
-                print("Waiting until redirected, timeout after 5 seconds")
-                WebDriverWait(self.browser, 5).until(expected_conditions.staleness_of(input))
-            except ElementNotVisibleException:
-                print(f"Potential password input not visible, skipping: {input}", file=stderr)
-
-    def _start(self, user_agent : Optional[str] = None, cookies : Optional[Dict[str, str]] = None):
-        """Starts a Chrome browser with given user-agent and cookies"""
-        chrome_options = chrome.ChromeOptions()
+        options.add_argument('--headless')
 
         if user_agent:
-            chrome_options.add_argument(f"user-agent={user_agent}")
+            options.add_argument(f'--user-agent="{user_agent}"')
 
         seleniumwire_options = {
             'request_storage': "memory",
             'request_storage_max_size': 200,
+            'suppress_connection_errors': False,
+            'verify_ssl': False,
         }
 
-        self.browser = chrome.Chrome(
-            headless=True,
-            options=chrome_options,
+        self.browser = uc.Chrome(
+            options=options,
+#            browser_executable_path="/usr/local/bin/chromium",
             seleniumwire_options=seleniumwire_options,
         )
-
-        if cookies:
-            self.browser.add_cookie(cookies)
 
     def _generate_credentials(self) -> (str, str):
         """Generates random credentials as a tuple of (username, password)"""
@@ -221,7 +204,7 @@ class VictimSimulator:
         ]
 
         username = random.choice(usernames) + "@" + random.choice(domains)
-        password = random.choices(string.ascii_lowercase + string.digits, k=10)
+        password = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
 
         return (username, password)
 
@@ -231,7 +214,7 @@ class VictimSimulator:
             * aborts the request(s) that contain the password
             * stores details in self.exfiltration
         """
-        needles = {
+        needles_by_creds = {
             'username': [
                 username.encode(),
             ] + [
@@ -246,15 +229,17 @@ class VictimSimulator:
             ],
         }
 
-        def interceptor(request : Request, results : List[Dict[str, Any]] = self.exfiltration):
+        def interceptor(request : Request, results : List[Dict[str, Any]] = self.exfiltration, logger = app.logger):
             url = request.url
             url_bytes = url.encode()
             body : bytes = request.body
 
-            for credential_type, needles in needles.items():
+            logger.debug(f"Intercepted request: {url}")
+
+            for credential_type, needles in needles_by_creds.items():
                 for needle in needles:
                     if needle in url_bytes or needle in body:
-                        print(f"Found credential '{credential_type}' exfiltrated as '{needle}' in request to {url}", file=stderr)
+                        logger.info(f"Found credential '{credential_type}' exfiltrated as '{needle}' in request to {url}")
                         results.append({
                             'type': credential_type,
                             'url': url,
@@ -268,6 +253,71 @@ class VictimSimulator:
                             return
 
         self.browser.request_interceptor = interceptor
+
+    def _submit_credentials(self, username, password):
+        password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
+        can_enter_password = any(
+            input.is_displayed() and input.is_enabled()
+                for input in password_inputs
+        )
+
+        # Enter username, if possible
+        username_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_username)
+        app.logger.debug(f"Username inputs: {username_inputs}")
+        for input in username_inputs:
+            try:
+                app.logger.debug(f"Username input: {input}")
+
+                app.logger.debug("Clearing field")
+                input.send_keys(Keys.CONTROL + "a")
+                input.send_keys(Keys.DELETE)
+
+                app.logger.debug("Entering username")
+                input.send_keys(username)
+
+                if not can_enter_password:
+                    app.logger.debug("Waiting 2 seconds")
+                    time.sleep(2)
+
+                    app.logger.debug("Pressing enter in user input")
+                    input.send_keys(Keys.ENTER)
+
+                    app.logger.debug("Waiting 2 seconds")
+                    time.sleep(2)
+            except ElementNotVisibleException:
+                app.logger.warning(f"Potential user input not visible, skipping: {input}")
+
+        # Click continue if there's no visible password input
+
+        password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
+        app.logger.debug(f"Password inputs: {password_inputs}")
+        for input in password_inputs:
+            try:
+                app.logger.debug(f"Using password input: {input}")
+
+                app.logger.debug("Clearing field")
+                input.send_keys(Keys.CONTROL + "a")
+                input.send_keys(Keys.DELETE)
+
+                app.logger.debug("Entering password")
+                input.send_keys(password)
+
+                # Wait for 2 seconds
+                app.logger.debug("Waiting 2 seconds")
+                time.sleep(2)
+
+                # Submit form
+                app.logger.debug("Pressing enter in password input")
+                input.send_keys(Keys.ENTER)
+
+                # Wait until the password input is no longer part of the DOM, timout after 5 sec
+                app.logger.debug("Waiting for 5 seconds")
+                time.sleep(5)
+            except ElementNotVisibleException:
+                app.logger.warning(f"Potential password input not visible, skipping: {input}")
+
+        app.logger.debug("We're done submitting credentials")
+
 
 app = Flask(__name__)
 captcha_solver = Flaresolverr()
@@ -285,9 +335,18 @@ def submit():
     url = request.form['url']
 
     simulator = VictimSimulator(captcha_solver)
-    simulator.visit(url)
+    try:
+        simulator.visit(url)
+    except Exception as e:
+        app.logger.exception("Simulation failed")
+        simulator.browser.quit()
+        return abort(500, str(e))
 
-    return jsonify(simulator.exfiltration)
+    return jsonify({
+        'exfiltration': simulator.exfiltration,
+    })
 
 if __name__ == '__main__':
+    app.logger.setLevel(logging.DEBUG)
+    app.logger.info("Let's gooooo")
     app.run(debug=True, host="0.0.0.0", port=8080)
