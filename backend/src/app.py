@@ -19,6 +19,9 @@ from xvfbwrapper import Xvfb
 
 from util import base64_offsets
 
+class FlaresolverrError(Exception):
+    pass
+
 
 class Flaresolverr:
     def __init__(self):
@@ -29,9 +32,14 @@ class Flaresolverr:
         data['cmd'] = command
 
         r = requests.post(self.url, json=data)
-        r.raise_for_status()
+        resp = r.json()
 
-        return r.json()
+        if resp.get('status') != "ok":
+            app.logger.error("Got non-ok response from flaresolverr: " + r.text)
+            raise FlaresolverrError(resp.get('message'))
+
+        r.raise_for_status()
+        return resp
 
     def get_sessions(self) -> List[str]:
         return self.request("sessions.list")
@@ -343,7 +351,11 @@ def submit():
             simulator.visit(url)
         except Exception as e:
             app.logger.exception("Simulation failed")
-            return abort(500, str(e))
+            response = jsonify({
+                'error': str(e),
+            })
+            response.status_code = 500
+            return response
 
         return jsonify({
             'exfiltration': simulator.exfiltration,
