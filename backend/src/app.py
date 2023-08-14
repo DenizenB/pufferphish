@@ -88,7 +88,7 @@ class VictimSimulator:
 
     sel_username : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled])"
     sel_password : ClassVar[str] = "input[type='password']"
-    sel_ready : ClassVar[str] = "input"
+    sel_username_or_password : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']"
 
     exfiltration : List[Dict[str, Any]]
     browser : Optional[uc.Chrome]
@@ -100,9 +100,17 @@ class VictimSimulator:
         self.exfiltration = []
         self.browser = None
 
+    def __enter__(self):
         if not VictimSimulator.virtual_display:
             VictimSimulator.virtual_display = Xvfb()
             VictimSimulator.virtual_display.start()
+
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.browser:
+            self.browser.quit()
+            self.browser = None
 
     def visit(self, url : str):
         # Use Flaresolverr in case there's a captcha
@@ -126,21 +134,8 @@ class VictimSimulator:
 
             self.browser.get(url)
 
-        try:
-            app.logger.info("Waiting for input, up to 30 sec")
-            WebDriverWait(self.browser, 30).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_ready))
-            )
-        except TimeoutException:
-            app.logger.info("Timed out waiting for username input")
-
         # Enter the credentials
         self._submit_credentials(username, password)
-
-        # Close browser and return
-        app.logger.info("Quitting browser")
-        self.browser.quit()
-        self.browser = None
 
     def _start(self, user_agent : Optional[str] = None):
         """Starts a Chrome browser with given user-agent"""
@@ -263,6 +258,14 @@ class VictimSimulator:
         self.browser.request_interceptor = interceptor
 
     def _submit_credentials(self, username, password):
+        try:
+            app.logger.info("Waiting for user or password input field, max 30 sec")
+            WebDriverWait(self.browser, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_username_or_password))
+            )
+        except TimeoutException:
+            app.logger.info("Timed out waiting for fields")
+
         password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
         can_enter_password = any(
             input.is_displayed() and input.is_enabled()
@@ -287,12 +290,12 @@ class VictimSimulator:
                     app.logger.debug("Pressing enter in user input")
                     input.send_keys(Keys.ENTER)
 
-                    app.logger.debug("Waiting 2 seconds")
-                    time.sleep(2)
+                    app.logger.debug("Waiting for password field, max 30 sec")
+                    WebDriverWait(self.browser, 30).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_password))
+                    )
             except ElementNotVisibleException:
                 app.logger.warning(f"Potential user input not visible, skipping: {input}")
-
-        # Click continue if there's no visible password input
 
         password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
         app.logger.debug(f"Password inputs: {password_inputs}")
@@ -307,16 +310,12 @@ class VictimSimulator:
                 app.logger.debug("Entering password")
                 input.send_keys(password)
 
-                # Wait for 2 seconds
-                app.logger.debug("Waiting 2 seconds")
-                time.sleep(2)
-
                 # Submit form
                 app.logger.debug("Pressing enter in password input")
                 input.send_keys(Keys.ENTER)
 
-                # Wait until the password input is no longer part of the DOM, timout after 5 sec
-                app.logger.debug("Waiting for 5 seconds")
+                # Wait for exfiltration, max 5 sec
+                app.logger.debug("Waiting for 5 seconds to allow exfiltration")
                 time.sleep(5)
             except ElementNotVisibleException:
                 app.logger.warning(f"Potential password input not visible, skipping: {input}")
@@ -339,19 +338,18 @@ def list():
 def submit():
     url = request.form['url']
 
-    simulator = VictimSimulator(captcha_solver)
-    try:
-        simulator.visit(url)
-    except Exception as e:
-        app.logger.exception("Simulation failed")
-        simulator.browser.quit()
-        return abort(500, str(e))
+    with VictimSimulator(captcha_solver) as simulator:
+        try:
+            simulator.visit(url)
+        except Exception as e:
+            app.logger.exception("Simulation failed")
+            return abort(500, str(e))
 
-    return jsonify({
-        'exfiltration': simulator.exfiltration,
-    })
+        return jsonify({
+            'exfiltration': simulator.exfiltration,
+        })
 
 if __name__ == '__main__':
     app.logger.setLevel(logging.DEBUG)
-    app.logger.info("Let's gooooo")
+    app.logger.info("Ready to serve")
     app.run(debug=True, host="0.0.0.0", port=8080)
