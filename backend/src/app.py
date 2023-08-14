@@ -15,6 +15,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from seleniumwire.request import Request
+from xvfbwrapper import Xvfb
 
 from util import base64_offsets
 
@@ -83,6 +84,8 @@ class VictimSimulator:
           - https://github.com/nf1s/selenium_phishing_detector
     """
 
+    virtual_display : ClassVar[Xvfb] = None
+
     sel_username : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled])"
     sel_password : ClassVar[str] = "input[type='password']"
     sel_ready : ClassVar[str] = "input"
@@ -96,6 +99,10 @@ class VictimSimulator:
 
         self.exfiltration = []
         self.browser = None
+
+        if not VictimSimulator.virtual_display:
+            VictimSimulator.virtual_display = Xvfb()
+            VictimSimulator.virtual_display.start()
 
     def visit(self, url : str):
         # Use Flaresolverr in case there's a captcha
@@ -158,7 +165,8 @@ class VictimSimulator:
         # https://peter.sh/experiments/chromium-command-line-switches/#use-gl
         options.add_argument('--use-gl=swiftshader')
 
-        options.add_argument('--headless')
+        # Use a virtual display instead of headless, technique taken from FlareSolverr
+        #options.add_argument('--headless')
 
         if user_agent:
             options.add_argument(f'--user-agent="{user_agent}"')
@@ -276,9 +284,6 @@ class VictimSimulator:
                 input.send_keys(username)
 
                 if not can_enter_password:
-                    app.logger.debug("Waiting 2 seconds")
-                    time.sleep(2)
-
                     app.logger.debug("Pressing enter in user input")
                     input.send_keys(Keys.ENTER)
 

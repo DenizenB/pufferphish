@@ -1,9 +1,9 @@
 FROM python:3
 
 RUN apt update \
-    && apt install -y chromium \
+    && apt install -y chromium xvfb \
     && apt clean all \
-    && pip install requests flask pytest mitmproxy undetected-chromedriver selenium-wire
+    && pip install --disable-pip-version-check --no-cache-dir requests flask pytest undetected-chromedriver selenium-wire xvfbwrapper
 
 WORKDIR /app
 ADD src/ .
