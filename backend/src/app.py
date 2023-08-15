@@ -27,7 +27,6 @@ class FlaresolverrError(Exception):
 class Flaresolverr:
     def __init__(self):
         self.url = "http://flaresolverr:8080/v1"
-        self.session = None
 
     def request(self, command, **data) -> Dict:
         data['cmd'] = command
@@ -52,11 +51,7 @@ class Flaresolverr:
         return self.request("sessions.destroy", session=name)
 
     def get(self, url, **data):
-        if not self.session:
-            self.session = self.create_session()
-
         data['url'] = url
-        data['session'] = self.session
 
         return self.request("request.get", **data)
 
