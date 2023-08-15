@@ -3,13 +3,14 @@ import random
 import string
 import time
 from base64 import b64encode
+from urllib.parse import quote
 from sys import stderr
 from typing import Dict, List, Optional, Any, ClassVar
 
 import requests
 import seleniumwire.undetected_chromedriver as uc
 from flask import Flask, request, jsonify, abort
-from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -226,42 +227,51 @@ class VictimSimulator:
             * stores details in self.exfiltration
         """
         needles_by_creds = {
-            'username': [
+            'username': set([
                 username.encode(),
+                quote(username).encode(),
             ] + [
                 offset.encode()
                     for offset in base64_offsets(username)
-            ],
-            'password': [
+            ]),
+            'password': set([
                 password.encode(),
+                quote(password).encode()
             ] + [
                 offset.encode()
                     for offset in base64_offsets(password)
-            ],
+            ]),
         }
 
-        def interceptor(request : Request, results : List[Dict[str, Any]] = self.exfiltration, logger = app.logger):
+        def interceptor(request : Request, exfiltration : List[Dict[str, Any]] = self.exfiltration, logger = app.logger):
             url = request.url
-            url_bytes = url.encode()
-            body : bytes = request.body
-
             logger.debug(f"Intercepted request: {url}")
 
+            url_bytes = url.encode()
+            body_bytes = request.body
+
+            exfiltrated_credentials = []
             for credential_type, needles in needles_by_creds.items():
                 for needle in needles:
-                    if needle in url_bytes or needle in body:
-                        logger.info(f"Found credential '{credential_type}' exfiltrated as '{needle}' in request to {url}")
-                        results.append({
-                            'type': credential_type,
-                            'url': url,
-                            'body': body.decode(),
-                        })
+                    if needle in url_bytes or needle in body_bytes:
+                        logger.info(f"Found {credential_type} exfiltrated to: {url}")
+                        exfiltrated_credentials.append(credential_type)
 
                         # Sometimes the email address is submitted first in its own request
                         # We don't abort that request since we want to see where the password is sent off to
                         if credential_type == "password":
                             request.abort()
-                            return
+
+                        # Stop looking for this credential type; it's already been found
+                        break
+
+            if exfiltrated_credentials:
+                exfiltration.append({
+                    'method': request.method,
+                    'url': url,
+                    'body': body_bytes.decode(),
+                    'credential_types': exfiltrated_credentials,
+                })
 
         self.browser.request_interceptor = interceptor
 
@@ -325,8 +335,8 @@ class VictimSimulator:
                 # Wait for exfiltration, max 5 sec
                 app.logger.debug("Waiting for 5 seconds to allow exfiltration")
                 time.sleep(5)
-            except ElementNotVisibleException:
-                app.logger.warning(f"Potential password input not visible, skipping: {input}")
+            except (ElementNotVisibleException, StaleElementReferenceException):
+                app.logger.warning(f"Password input gone or hidden, skipping: {input}")
 
         app.logger.debug("We're done submitting credentials")
 
