@@ -120,7 +120,7 @@ class VictimSimulator:
         # Use Flaresolverr in case there's a captcha
         solution = self.solver.solve(url)
 
-        # Start up browser with the captcha solution
+        # Start up browser with the user agent from the captcha solution
         self._start(user_agent=solution.get('user_agent'))
 
         # Generate credentials and set up interception
@@ -130,38 +130,32 @@ class VictimSimulator:
         # Visit the suspected phishing page
         self.browser.get(url)
 
-        # Cookies?
+        # Should we set any cookies from the captcha solution?
         cookies = solution.get('cookies', [])
         if cookies:
             for cookie in cookies:
                 self.browser.add_cookie(cookie)
 
+            # Refresh the page after cookies have been set
             self.browser.get(url)
 
-        # Enter the credentials
+        # Submit the credentials
         self._submit_credentials(username, password)
 
     def _start(self, user_agent : Optional[str] = None):
         """Starts a Chrome browser with given user-agent"""
 
-        # undetected_chromedriver
+        # Startup options taken from FlareSolverr
         options = uc.ChromeOptions()
         options.add_argument('--no-sandbox')
         options.add_argument('--window-size=1920,1080')
-        # todo: this param shows a warning in chrome head-full
         options.add_argument('--disable-setuid-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        # this option removes the zygote sandbox (it seems that the resolution is a bit faster)
         options.add_argument('--no-zygote')
-        # attempt to fix Docker ARM32 build
         options.add_argument('--disable-gpu-sandbox')
         options.add_argument('--disable-software-rasterizer')
         options.add_argument('--ignore-certificate-errors')
         options.add_argument('--ignore-ssl-errors')
-        # fix GL errors in ASUSTOR NAS
-        # https://github.com/FlareSolverr/FlareSolverr/issues/782
-        # https://github.com/microsoft/vscode/issues/127800#issuecomment-873342069
-        # https://peter.sh/experiments/chromium-command-line-switches/#use-gl
         options.add_argument('--use-gl=swiftshader')
 
         # Use a virtual display instead of headless, technique taken from FlareSolverr
@@ -179,7 +173,6 @@ class VictimSimulator:
 
         self.browser = uc.Chrome(
             options=options,
-#            browser_executable_path="/usr/local/bin/chromium",
             seleniumwire_options=seleniumwire_options,
         )
 
