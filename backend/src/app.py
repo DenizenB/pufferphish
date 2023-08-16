@@ -95,14 +95,19 @@ class VictimSimulator:
     sel_username_or_password : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']"
 
     exfiltration : List[Dict[str, Any]]
+    html : Optional[str]
+    status : Optional[int]
+
     browser : Optional[uc.Chrome]
     solver : Flaresolverr
 
     def __init__(self, solver : Flaresolverr):
         self.solver = solver
+        self.browser = None
 
         self.exfiltration = []
-        self.browser = None
+        self.html = None
+        self.status = None
 
     def __enter__(self):
         if not VictimSimulator.virtual_display:
@@ -272,6 +277,9 @@ class VictimSimulator:
         except TimeoutException:
             app.logger.info("Timed out waiting for fields")
 
+        # Grab HTML before we start editing fields
+        self.html = self.browser.execute_script("return document.documentElement.outerHTML")
+
         password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
         can_enter_password = any(
             input.is_displayed() and input.is_enabled()
@@ -356,6 +364,7 @@ def submit():
             return response
 
         return jsonify({
+            'html': simulator.html,
             'exfiltration': simulator.exfiltration,
         })
 
