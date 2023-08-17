@@ -90,10 +90,11 @@ class VictimSimulator:
 
     virtual_display : ClassVar[Xvfb] = None
 
-    sel_username : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled])"
-    sel_password : ClassVar[str] = "input[type='password']:not([disabled])"
-    sel_username_or_password : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']:not([disabled])"
-    sel_submit : ClassVar[str] = "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit']"
+    sel_username : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text']:not([disabled]), input[type='email']:not([disabled])")
+    sel_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='password']:not([disabled])")
+    sel_username_or_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']:not([disabled])")
+    sel_continue : ClassVar[tuple[By, str]] = (By.XPATH, "//button[text()='Next']")
+    sel_submit : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit']")
 
     exfiltration : List[Dict[str, Any]]
     html : Optional[str]
@@ -275,7 +276,7 @@ class VictimSimulator:
         try:
             app.logger.info("Waiting for user or password input field, max 10 sec")
             WebDriverWait(self.browser, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_username_or_password))
+                EC.presence_of_element_located(self.sel_username_or_password)
             )
         except TimeoutException:
             app.logger.info("Timed out waiting for fields")
@@ -283,14 +284,14 @@ class VictimSimulator:
         # Grab HTML before we start editing fields
         self.html = self.browser.execute_script("return document.documentElement.outerHTML")
 
-        password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
+        password_inputs = self.browser.find_elements(*self.sel_password)
         can_enter_password = any(
             input.is_displayed() and input.is_enabled()
                 for input in password_inputs
         )
 
         # Enter username, if possible
-        username_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_username)
+        username_inputs = self.browser.find_elements(*self.sel_username)
         app.logger.debug(f"Username inputs: {username_inputs}")
         attempts = 3
         for input in username_inputs:
@@ -309,9 +310,17 @@ class VictimSimulator:
                         app.logger.debug("Pressing enter in user input")
                         input.send_keys(Keys.ENTER)
 
+                        time.sleep(1)
+                        try:
+                            continue_button = self.browser.find_element(*self.sel_continue)
+                            app.logger.debug(f"Clicking continue button: {continue_button}")
+                            continue_button.click()
+                        except:
+                            pass
+
                         app.logger.debug("Waiting for password field, max 10 sec")
                         WebDriverWait(self.browser, 10).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_password))
+                            EC.presence_of_element_located(self.sel_password)
                         )
 
                     break
@@ -322,7 +331,7 @@ class VictimSimulator:
                         app.logger.warning(f"{type(e).__name__}, retrying in 5 sec")
                         time.sleep(5)
 
-        password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
+        password_inputs = self.browser.find_elements(*self.sel_password)
         app.logger.debug(f"Password inputs: {password_inputs}")
         for input in password_inputs:
             for attempt in range(1, attempts+1):
@@ -350,7 +359,7 @@ class VictimSimulator:
                     break
 
         try:
-            submit_button = self.browser.find_element(By.CSS_SELECTOR, self.sel_submit)
+            submit_button = self.browser.find_element(*self.sel_submit)
             app.logger.debug("Clicking submit button: {submit_button}")
             submit_button.click()
         except NoSuchElementException:
