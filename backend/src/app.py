@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Any, ClassVar
 import requests
 import seleniumwire.undetected_chromedriver as uc
 from flask import Flask, request, jsonify, abort
-from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException, TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException, TimeoutException, StaleElementReferenceException, ElementNotInteractableException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -91,8 +91,9 @@ class VictimSimulator:
     virtual_display : ClassVar[Xvfb] = None
 
     sel_username : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled])"
-    sel_password : ClassVar[str] = "input[type='password']"
-    sel_username_or_password : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']"
+    sel_password : ClassVar[str] = "input[type='password']:not([disabled])"
+    sel_username_or_password : ClassVar[str] = "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']:not([disabled])"
+    sel_submit : ClassVar[str] = "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit']"
 
     exfiltration : List[Dict[str, Any]]
     html : Optional[str]
@@ -180,6 +181,8 @@ class VictimSimulator:
             options=options,
             seleniumwire_options=seleniumwire_options,
         )
+
+        self.browser.set_page_load_timeout(5)
 
     def _generate_credentials(self) -> (str, str):
         """Generates random credentials as a tuple of (username, password)"""
@@ -270,8 +273,8 @@ class VictimSimulator:
 
     def _submit_credentials(self, username, password):
         try:
-            app.logger.info("Waiting for user or password input field, max 30 sec")
-            WebDriverWait(self.browser, 30).until(
+            app.logger.info("Waiting for user or password input field, max 10 sec")
+            WebDriverWait(self.browser, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_username_or_password))
             )
         except TimeoutException:
@@ -289,53 +292,85 @@ class VictimSimulator:
         # Enter username, if possible
         username_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_username)
         app.logger.debug(f"Username inputs: {username_inputs}")
+        attempts = 3
         for input in username_inputs:
-            try:
-                app.logger.debug(f"Username input: {input}")
+            for attempt in range(1, attempts+1):
+                try:
+                    app.logger.debug(f"Username input: {input}")
 
-                app.logger.debug("Clearing field")
-                input.send_keys(Keys.CONTROL + "a")
-                input.send_keys(Keys.DELETE)
+                    app.logger.debug("Clearing field")
+                    input.send_keys(Keys.CONTROL + "a")
+                    input.send_keys(Keys.DELETE)
 
-                app.logger.debug("Entering username")
-                input.send_keys(username)
+                    app.logger.debug("Entering username")
+                    input.send_keys(username)
 
-                if not can_enter_password:
-                    app.logger.debug("Pressing enter in user input")
-                    input.send_keys(Keys.ENTER)
+                    if not can_enter_password:
+                        app.logger.debug("Pressing enter in user input")
+                        input.send_keys(Keys.ENTER)
 
-                    app.logger.debug("Waiting for password field, max 30 sec")
-                    WebDriverWait(self.browser, 30).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_password))
-                    )
-            except ElementNotVisibleException:
-                app.logger.warning(f"Potential user input not visible, skipping: {input}")
+                        app.logger.debug("Waiting for password field, max 10 sec")
+                        WebDriverWait(self.browser, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, self.sel_password))
+                        )
+
+                    break
+                except (ElementNotVisibleException, ElementNotInteractableException) as e:
+                    if attempt == attempts:
+                        app.logger.warning(f"{type(e).__name__}, skipping")
+                    else:
+                        app.logger.warning(f"{type(e).__name__}, retrying in 5 sec")
+                        time.sleep(5)
 
         password_inputs = self.browser.find_elements(By.CSS_SELECTOR, self.sel_password)
         app.logger.debug(f"Password inputs: {password_inputs}")
         for input in password_inputs:
-            try:
-                app.logger.debug(f"Using password input: {input}")
+            for attempt in range(1, attempts+1):
+                try:
+                    app.logger.debug(f"Using password input: {input}")
 
-                app.logger.debug("Clearing field")
-                input.send_keys(Keys.CONTROL + "a")
-                input.send_keys(Keys.DELETE)
+                    app.logger.debug("Clearing field")
+                    input.send_keys(Keys.CONTROL + "a")
+                    input.send_keys(Keys.DELETE)
 
-                app.logger.debug("Entering password")
-                input.send_keys(password)
+                    app.logger.debug("Entering password")
+                    input.send_keys(password)
 
-                # Submit form
-                app.logger.debug("Pressing enter in password input")
-                input.send_keys(Keys.ENTER)
+                    # Submit form
+                    app.logger.debug("Pressing enter in password input")
+                    input.send_keys(Keys.ENTER)
+                except (ElementNotVisibleException, ElementNotInteractableException) as e:
+                    if attempt == attempts:
+                        app.logger.warning(f"Password input gone or hidden, skipping")
+                    else:
+                        app.logger.warning(f"Password input gone or hidden, retrying in 5 sec")
+                        time.sleep(5)
+                except StaleElementReferenceException:
+                    app.logger.warning("Password input has gone stale, skipping")
 
-                # Wait for exfiltration, max 5 sec
-                app.logger.debug("Waiting for 5 seconds to allow exfiltration")
-                time.sleep(5)
-            except (ElementNotVisibleException, StaleElementReferenceException):
-                app.logger.warning(f"Password input gone or hidden, skipping: {input}")
+        try:
+            submit_button = self.browser.find_element(By.CSS_SELECTOR, self.sel_submit)
+            app.logger.debug("Clicking submit button: {submit_button}")
+            submit_button.click()
+        except NoSuchElementException:
+            pass
+
+        # Wait for exfiltration, max 5 sec
+        app.logger.debug("Waiting for 5 seconds to allow exfiltration")
+        time.sleep(5)
 
         app.logger.debug("We're done submitting credentials")
 
+    def get_result(self) -> Dict[str, Any]:
+        if self.exfiltration:
+            return {
+                'exfiltration': self.exfiltration,
+            }
+
+        return {
+            'error': "No exfiltration observed",
+            'html': self.html,
+        }
 
 app = Flask(__name__)
 captcha_solver = Flaresolverr()
@@ -363,10 +398,7 @@ def submit():
             response.status_code = 500
             return response
 
-        return jsonify({
-            'html': simulator.html,
-            'exfiltration': simulator.exfiltration,
-        })
+        return jsonify(simulator.get_result())
 
 if __name__ == '__main__':
     app.logger.setLevel(logging.DEBUG)
