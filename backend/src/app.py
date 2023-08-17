@@ -31,7 +31,7 @@ class Flaresolverr:
     def request(self, command, **data) -> Dict:
         data['cmd'] = command
 
-        r = requests.post(self.url, json=data)
+        r = requests.post(self.url, json=data, timeout=20)
         resp = r.json()
 
         if resp.get('status') != "ok":
@@ -347,6 +347,7 @@ class VictimSimulator:
                         time.sleep(5)
                 except StaleElementReferenceException:
                     app.logger.warning("Password input has gone stale, skipping")
+                    break
 
         try:
             submit_button = self.browser.find_element(By.CSS_SELECTOR, self.sel_submit)
