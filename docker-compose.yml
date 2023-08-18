@@ -1,4 +1,4 @@
-version: "2.1"
+version: "3.5"
 services:
   flaresolverr:
     # DockerHub mirror flaresolverr/flaresolverr:latest
@@ -9,8 +9,6 @@ services:
       - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-none}
       - TZ=Europe/London
       - PORT=8080
-    ports:
-      - 8080
     restart: unless-stopped
   backend:
     build: backend

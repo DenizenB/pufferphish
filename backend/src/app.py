@@ -27,6 +27,33 @@ class FlaresolverrError(Exception):
 class BannedError(Exception):
     pass
 
+class Solution:
+    user_agent : Optional[str]
+    html : Optional[str]
+    cookies : List[Dict[str, str]]
+
+    def __init__(self, user_agent : Optional[str] = None, html : Optional[str] = None, cookies : List[Dict[str, str]] = []):
+        self.user_agent = user_agent
+        self.html = html
+        self.cookies = cookies
+
+class Result:
+    exfiltration : List[Dict[str, Any]]
+    html : str
+    solver_html : str
+
+    def __init__(self, *, exfiltration = [], html = None, solver_html = None, error = None):
+        self.exfiltration = exfiltration
+        self.html = html
+        self.solver_html = solver_html
+
+    def to_dict(self):
+        return {
+            'exfiltration': self.exfiltration,
+            'html': self.html,
+            'solver_html': self.solver_html,
+        }
+
 class Flaresolverr:
     def __init__(self):
         self.url = "http://flaresolverr:8080/v1"
@@ -58,23 +85,21 @@ class Flaresolverr:
 
         return self.request("request.get", **data)
 
-    def solve(self, url) -> Dict[str, Any]:
+    def solve(self, url) -> Solution:
         """
-            Solves a captcha on the URL, if found, and returns the solution as arguments for the Chrome browser
+            Solves a captcha on the URL, if found, and returns the solution
         """
-        solution = self.get(url).get('solution')
+        solution = self.get(url).get('solution') or {}
 
-        if solution:
-            return {
-                'user_agent': solution.get('userAgent'),
-                'cookies': [{
+        return Solution(
+            user_agent=solution.get('userAgent'),
+            html=solution.get('response'),
+            cookies=[{
                     'name': c['name'],
                     'value': c['value'],
                 } for c in solution.get('cookies', [])
-                ]
-            }
-
-        return {}
+            ],
+        )
 
 class VictimSimulator:
     """
@@ -102,9 +127,7 @@ class VictimSimulator:
     sel_continue : ClassVar[tuple[By, str]] = (By.XPATH, "//button[text()='Next']")
     sel_submit : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit']")
 
-    exfiltration : List[Dict[str, Any]]
-    html : Optional[str]
-    status : Optional[int]
+    result : Result
 
     browser : Optional[uc.Chrome]
     solver : Flaresolverr
@@ -113,9 +136,7 @@ class VictimSimulator:
         self.solver = solver
         self.browser = None
 
-        self.exfiltration = []
-        self.html = None
-        self.status = None
+        self.result = Result()
 
     def __enter__(self):
         if not VictimSimulator.virtual_display:
@@ -132,9 +153,10 @@ class VictimSimulator:
     def visit(self, url : str):
         # Use Flaresolverr in case there's a captcha
         solution = self.solver.solve(url)
+        self.result.solver_html = solution.html
 
         # Start up browser with the user agent from the captcha solution
-        self._start(user_agent=solution.get('user_agent'))
+        self._start(user_agent=solution.user_agent)
 
         # Generate credentials and set up interception
         username, password = self._generate_credentials()
@@ -144,9 +166,8 @@ class VictimSimulator:
         self.browser.get(url)
 
         # Should we set any cookies from the captcha solution?
-        cookies = solution.get('cookies', [])
-        if cookies:
-            for cookie in cookies:
+        if solution.cookies:
+            for cookie in solution.cookies:
                 self.browser.add_cookie(cookie)
 
             # Refresh the page after cookies have been set
@@ -235,7 +256,7 @@ class VictimSimulator:
         """This method:
             * intercepts any request that contains the given credentials
             * aborts the request(s) that contain the password
-            * stores details in self.exfiltration
+            * stores details in self.result.exfiltration
         """
         needles_by_creds = {
             'username': set([
@@ -254,7 +275,7 @@ class VictimSimulator:
             ]),
         }
 
-        def interceptor(request : Request, exfiltration : List[Dict[str, Any]] = self.exfiltration, logger = app.logger):
+        def interceptor(request : Request, result : Result = self.result, logger = app.logger):
             url = request.url
             logger.debug(f"Intercepted request: {url}")
 
@@ -277,7 +298,7 @@ class VictimSimulator:
                         break
 
             if exfiltrated_credentials:
-                exfiltration.append({
+                result.exfiltration.append({
                     'method': request.method,
                     'url': url,
                     'body': body_bytes.decode(),
@@ -296,9 +317,9 @@ class VictimSimulator:
             app.logger.info("Timed out waiting for inputs")
 
         # Grab HTML before we start editing fields
-        self.html = self.browser.execute_script("return document.documentElement.outerHTML")
+        html = self.result.html = self.browser.execute_script("return document.documentElement.outerHTML")
 
-        if "has banned your access based on your browser's signature" in self.html:
+        if "has banned your access based on your browser's signature" in html:
             raise BannedError("Banned by CloudFlare")
 
         password_inputs = self.browser.find_elements(*self.sel_password)
@@ -393,16 +414,6 @@ class VictimSimulator:
 
         app.logger.debug("We're done submitting credentials")
 
-    def get_result(self) -> Dict[str, Any]:
-        if self.exfiltration:
-            return {
-                'exfiltration': self.exfiltration,
-            }
-
-        return {
-            'html': self.html,
-        }
-
 app = Flask(__name__)
 captcha_solver = Flaresolverr()
 
@@ -432,7 +443,7 @@ def submit():
             result['error'] = str(e)
             status = 500
 
-        result.update(simulator.get_result())
+        result.update(simulator.result.to_dict())
 
         response = jsonify(result)
         response.status_code = status
