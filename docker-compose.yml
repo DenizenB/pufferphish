@@ -19,3 +19,5 @@ services:
     restart: unless-stopped
     depends_on:
       - flaresolverr
+    environment:
+      - PROXY

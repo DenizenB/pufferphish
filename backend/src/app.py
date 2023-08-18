@@ -3,6 +3,7 @@ import random
 import string
 import time
 from base64 import b64encode
+from os import environ as env
 from urllib.parse import quote
 from sys import stderr
 from typing import Dict, List, Optional, Any, ClassVar
@@ -23,6 +24,8 @@ from util import base64_offsets
 class FlaresolverrError(Exception):
     pass
 
+class BannedError(Exception):
+    pass
 
 class Flaresolverr:
     def __init__(self):
@@ -90,9 +93,12 @@ class VictimSimulator:
 
     virtual_display : ClassVar[Xvfb] = None
 
-    sel_username : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text']:not([disabled]), input[type='email']:not([disabled])")
-    sel_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='password']:not([disabled])")
-    sel_username_or_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text']:not([disabled]), input[type='email']:not([disabled]), input[type='password']:not([disabled])")
+    wait_time : ClassVar[int] = 15
+    retry_wait_time : ClassVar[int] = 5
+
+    sel_username : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text'], input[type='email']")
+    sel_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='password']")
+    sel_username_or_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text'], input[type='email'], input[type='password']")
     sel_continue : ClassVar[tuple[By, str]] = (By.XPATH, "//button[text()='Next']")
     sel_submit : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit']")
 
@@ -177,6 +183,14 @@ class VictimSimulator:
             'suppress_connection_errors': False,
             'verify_ssl': False,
         }
+
+        proxy = env.get('PROXY')
+        if proxy:
+            app.logger.info(f"Using proxy {proxy}")
+            seleniumwire_options['proxy'] = {
+                'http': proxy,
+                'https': proxy,
+            }
 
         self.browser = uc.Chrome(
             options=options,
@@ -274,15 +288,18 @@ class VictimSimulator:
 
     def _submit_credentials(self, username, password):
         try:
-            app.logger.info("Waiting for user or password input field, max 10 sec")
-            WebDriverWait(self.browser, 10).until(
+            app.logger.info(f"Waiting for user or password input field, max {self.wait_time} sec")
+            WebDriverWait(self.browser, self.wait_time).until(
                 EC.presence_of_element_located(self.sel_username_or_password)
             )
         except TimeoutException:
-            app.logger.info("Timed out waiting for fields")
+            app.logger.info("Timed out waiting for inputs")
 
         # Grab HTML before we start editing fields
         self.html = self.browser.execute_script("return document.documentElement.outerHTML")
+
+        if "has banned your access based on your browser's signature" in self.html:
+            raise BannedError("Banned by CloudFlare")
 
         password_inputs = self.browser.find_elements(*self.sel_password)
         can_enter_password = any(
@@ -291,72 +308,77 @@ class VictimSimulator:
         )
 
         # Enter username, if possible
-        username_inputs = self.browser.find_elements(*self.sel_username)
-        app.logger.debug(f"Username inputs: {username_inputs}")
+        app.logger.info(f"Attempting to input username: {username}")
         attempts = 3
-        for input in username_inputs:
-            for attempt in range(1, attempts+1):
-                try:
-                    app.logger.debug(f"Username input: {input}")
+        for attempt in range(1, attempts+1):
+            try:
+                input = self.browser.find_element(*self.sel_username)
+                app.logger.debug(f"Username input: {input}")
 
-                    app.logger.debug("Clearing field")
-                    input.send_keys(Keys.CONTROL + "a")
-                    input.send_keys(Keys.DELETE)
+                app.logger.debug("Clearing field")
+                input.send_keys(Keys.CONTROL + "a")
+                input.send_keys(Keys.DELETE)
 
-                    app.logger.debug("Entering username")
-                    input.send_keys(username)
+                app.logger.debug("Entering username")
+                input.send_keys(username)
 
-                    if not can_enter_password:
-                        app.logger.debug("Pressing enter in user input")
-                        input.send_keys(Keys.ENTER)
-
-                        time.sleep(1)
-                        try:
-                            continue_button = self.browser.find_element(*self.sel_continue)
-                            app.logger.debug(f"Clicking continue button: {continue_button}")
-                            continue_button.click()
-                        except:
-                            pass
-
-                        app.logger.debug("Waiting for password field, max 10 sec")
-                        WebDriverWait(self.browser, 10).until(
-                            EC.presence_of_element_located(self.sel_password)
-                        )
-
-                    break
-                except (ElementNotVisibleException, ElementNotInteractableException) as e:
-                    if attempt == attempts:
-                        app.logger.warning(f"{type(e).__name__}, skipping")
-                    else:
-                        app.logger.warning(f"{type(e).__name__}, retrying in 5 sec")
-                        time.sleep(5)
-
-        password_inputs = self.browser.find_elements(*self.sel_password)
-        app.logger.debug(f"Password inputs: {password_inputs}")
-        for input in password_inputs:
-            for attempt in range(1, attempts+1):
-                try:
-                    app.logger.debug(f"Using password input: {input}")
-
-                    app.logger.debug("Clearing field")
-                    input.send_keys(Keys.CONTROL + "a")
-                    input.send_keys(Keys.DELETE)
-
-                    app.logger.debug("Entering password")
-                    input.send_keys(password)
-
-                    # Submit form
-                    app.logger.debug("Pressing enter in password input")
+                if not can_enter_password:
+                    app.logger.debug("Pressing enter in user input")
                     input.send_keys(Keys.ENTER)
-                except (ElementNotVisibleException, ElementNotInteractableException) as e:
-                    if attempt == attempts:
-                        app.logger.warning(f"Password input gone or hidden, skipping")
-                    else:
-                        app.logger.warning(f"Password input gone or hidden, retrying in 5 sec")
-                        time.sleep(5)
-                except StaleElementReferenceException:
-                    app.logger.warning("Password input has gone stale, skipping")
-                    break
+
+                    time.sleep(1)
+                    try:
+                        continue_button = self.browser.find_element(*self.sel_continue)
+                        app.logger.debug(f"Clicking continue button: {continue_button}")
+                        continue_button.click()
+                    except:
+                        pass
+
+                try:
+                    app.logger.debug(f"Waiting for password field, max {self.wait_time} sec")
+                    WebDriverWait(self.browser, self.wait_time).until(
+                        EC.presence_of_element_located(self.sel_password)
+                    )
+                except TimeoutException:
+                    app.logger.info("Timed out waiting for password field")
+
+
+                break
+            except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
+                if attempt == attempts:
+                    app.logger.warning(f"{type(e).__name__}, skipping")
+                else:
+                    app.logger.warning(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
+                    time.sleep(self.retry_wait_time)
+            except StaleElementReferenceException:
+                app.logger.warning("User input has gone stale, skipping")
+                break
+
+        app.logger.info(f"Attempting to input password: {password}")
+        for attempt in range(1, attempts+1):
+            try:
+                input = self.browser.find_element(*self.sel_password)
+                app.logger.debug(f"Using password input: {input}")
+
+                app.logger.debug("Clearing field")
+                input.send_keys(Keys.CONTROL + "a")
+                input.send_keys(Keys.DELETE)
+
+                app.logger.debug("Entering password")
+                input.send_keys(password)
+
+                # Submit form
+                app.logger.debug("Pressing enter in password input")
+                input.send_keys(Keys.ENTER)
+            except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
+                if attempt == attempts:
+                    app.logger.warning(f"{type(e).__name__}, skipping")
+                else:
+                    app.logger.warning(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
+                    time.sleep(self.retry_wait_time)
+            except StaleElementReferenceException:
+                app.logger.warning("Password input has gone stale, skipping")
+                break
 
         try:
             submit_button = self.browser.find_element(*self.sel_submit)
@@ -378,7 +400,6 @@ class VictimSimulator:
             }
 
         return {
-            'error': "No exfiltration observed",
             'html': self.html,
         }
 
@@ -396,19 +417,26 @@ def list():
 @app.route("/submit", methods=["POST"])
 def submit():
     url = request.form['url']
+    result = {}
+    status = 200
 
     with VictimSimulator(captcha_solver) as simulator:
         try:
             simulator.visit(url)
+        except BannedError as e:
+            app.logger.warning(str(e))
+            result['error'] = str(e)
+            status = 403
         except Exception as e:
             app.logger.exception("Simulation failed")
-            response = jsonify({
-                'error': str(e),
-            })
-            response.status_code = 500
-            return response
+            result['error'] = str(e)
+            status = 500
 
-        return jsonify(simulator.get_result())
+        result.update(simulator.get_result())
+
+        response = jsonify(result)
+        response.status_code = status
+        return response
 
 if __name__ == '__main__':
     app.logger.setLevel(logging.DEBUG)
