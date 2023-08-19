@@ -1,6 +1,7 @@
 import logging
 import random
 import string
+import tempfile
 import time
 from base64 import b64encode
 from os import environ as env
@@ -42,7 +43,7 @@ class Result:
     html : str
     solver_html : str
 
-    def __init__(self, *, exfiltration = [], html = None, solver_html = None, error = None):
+    def __init__(self, *, exfiltration = [], html = None, solver_html = None):
         self.exfiltration = exfiltration
         self.html = html
         self.solver_html = solver_html
@@ -150,9 +151,23 @@ class VictimSimulator:
             self.browser.quit()
             self.browser = None
 
-    def visit(self, url : str):
-        # Use Flaresolverr in case there's a captcha
-        solution = self.solver.solve(url)
+    def visit(self, url : Optional[str] = None, html : Optional[bytes] = None):
+        if html:
+            with tempfile.NamedTemporaryFile("wb", suffix=".html") as temp_file:
+                with temp_file.file as f:
+                    f.write(html)
+
+                return self._visit("file://" + temp_file.name, solve=False)
+
+        return self._visit(url)
+
+    def _visit(self, url : str, solve : bool = True):
+        if solve:
+            # Use Flaresolverr in case there's a captcha
+            solution = self.solver.solve(url)
+        else:
+            solution = Solution()
+
         self.result.solver_html = solution.html
 
         # Start up browser with the user agent from the captcha solution
@@ -308,6 +323,12 @@ class VictimSimulator:
         self.browser.request_interceptor = interceptor
 
     def _submit_credentials(self, username, password):
+        # Grab HTML before we start editing fields
+        html = self.result.html = self.browser.execute_script("return document.documentElement.outerHTML")
+
+        if "has banned your access based on your browser's signature" in html:
+            raise BannedError("Banned by CloudFlare")
+
         try:
             app.logger.info(f"Waiting for user or password input field, max {self.wait_time} sec")
             WebDriverWait(self.browser, self.wait_time).until(
@@ -318,9 +339,6 @@ class VictimSimulator:
 
         # Grab HTML before we start editing fields
         html = self.result.html = self.browser.execute_script("return document.documentElement.outerHTML")
-
-        if "has banned your access based on your browser's signature" in html:
-            raise BannedError("Banned by CloudFlare")
 
         password_inputs = self.browser.find_elements(*self.sel_password)
         can_enter_password = any(
@@ -363,7 +381,6 @@ class VictimSimulator:
                 except TimeoutException:
                     app.logger.info("Timed out waiting for password field")
 
-
                 break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
                 if attempt == attempts:
@@ -391,6 +408,8 @@ class VictimSimulator:
                 # Submit form
                 app.logger.debug("Pressing enter in password input")
                 input.send_keys(Keys.ENTER)
+
+                break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
                 if attempt == attempts:
                     app.logger.warning(f"{type(e).__name__}, skipping")
@@ -427,13 +446,24 @@ def list():
 
 @app.route("/submit", methods=["POST"])
 def submit():
-    url = request.form['url']
+    visit_args = {}
+
+    url = request.form.get('url')
+    uploaded_file = request.files.get('html')
+
+    if uploaded_file:
+        visit_args['html'] = uploaded_file.read()
+    elif url:
+        visit_args['url'] = url
+    else:
+        return "Bad args", 400
+
     result = {}
     status = 200
 
     with VictimSimulator(captcha_solver) as simulator:
         try:
-            simulator.visit(url)
+            simulator.visit(**visit_args)
         except BannedError as e:
             app.logger.warning(str(e))
             result['error'] = str(e)
