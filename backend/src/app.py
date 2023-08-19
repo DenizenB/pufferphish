@@ -270,7 +270,7 @@ class VictimSimulator:
     def _intercept_exfiltration(self, username : str, password : str):
         """This method:
             * intercepts any request that contains the given credentials
-            * aborts the request(s) that contain the password
+            * aborts the request(s) that contain creds
             * stores details in self.result.exfiltration
         """
         needles_by_creds = {
@@ -301,13 +301,10 @@ class VictimSimulator:
             for credential_type, needles in needles_by_creds.items():
                 for needle in needles:
                     if needle in url_bytes or needle in body_bytes:
-                        logger.info(f"Found {credential_type} exfiltrated to: {url}")
-                        exfiltrated_credentials.append(credential_type)
+                        request.abort()
 
-                        # Sometimes the email address is submitted first in its own request
-                        # We don't abort that request since we want to see where the password is sent off to
-                        if credential_type == "password":
-                            request.abort()
+                        logger.info(f"Blocked {credential_type} exfiltration to: {url}")
+                        exfiltrated_credentials.append(credential_type)
 
                         # Stop looking for this credential type; it's already been found
                         break
