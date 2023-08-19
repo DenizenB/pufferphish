@@ -33,20 +33,20 @@ class Solution:
     html : Optional[str]
     cookies : List[Dict[str, str]]
 
-    def __init__(self, user_agent : Optional[str] = None, html : Optional[str] = None, cookies : List[Dict[str, str]] = []):
+    def __init__(self, user_agent : Optional[str] = None, html : Optional[str] = None, cookies : List[Dict[str, str]] = None):
         self.user_agent = user_agent
         self.html = html
-        self.cookies = cookies
+        self.cookies = cookies or []
 
 class Result:
     exfiltration : List[Dict[str, Any]]
     html : str
     solver_html : str
 
-    def __init__(self, *, exfiltration = [], html = None, solver_html = None):
-        self.exfiltration = exfiltration
-        self.html = html
-        self.solver_html = solver_html
+    def __init__(self):
+        self.exfiltration = []
+        self.html = None
+        self.solver_html = None
 
     def to_dict(self):
         return {
@@ -332,7 +332,7 @@ class VictimSimulator:
                 EC.presence_of_element_located(self.sel_username_or_password)
             )
         except TimeoutException:
-            app.logger.info("Timed out waiting for inputs")
+            app.logger.debug("Timed out waiting for inputs")
 
         # Grab HTML before we start editing fields
         html = self.result.html = self.browser.execute_script("return document.documentElement.outerHTML")
@@ -376,7 +376,7 @@ class VictimSimulator:
                         EC.presence_of_element_located(self.sel_password)
                     )
                 except TimeoutException:
-                    app.logger.info("Timed out waiting for password field")
+                    app.logger.debug("Timed out waiting for password field")
 
                 break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
@@ -430,16 +430,9 @@ class VictimSimulator:
 
         app.logger.debug("We're done submitting credentials")
 
+
 app = Flask(__name__)
 captcha_solver = Flaresolverr()
-
-@app.route("/create")
-def create():
-    return jsonify(captcha_solver.create_session())
-
-@app.route("/list")
-def list():
-    return jsonify(captcha_solver.get_sessions())
 
 @app.route("/submit", methods=["POST"])
 def submit():
@@ -476,7 +469,8 @@ def submit():
         response.status_code = status
         return response
 
+
 if __name__ == '__main__':
     app.logger.setLevel(logging.DEBUG)
-    app.logger.info("Ready to serve")
+    app.logger.info("Starting app")
     app.run(debug=True, host="0.0.0.0", port=8080, threaded=False, processes=1)
