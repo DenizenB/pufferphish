@@ -233,7 +233,7 @@ class VictimSimulator:
             seleniumwire_options=seleniumwire_options,
         )
 
-        self.browser.set_page_load_timeout(5)
+        self.browser.set_page_load_timeout(10)
 
     def _generate_credentials(self) -> (str, str):
         """Generates random credentials as a tuple of (username, password)"""
@@ -292,7 +292,8 @@ class VictimSimulator:
 
         def interceptor(request : Request, result : Result = self.result, logger = app.logger):
             url = request.url
-            logger.debug(f"Intercepted request: {url}")
+            method = request.method
+            logger.info(f"*** {method} {url}")
 
             url_bytes = url.encode()
             body_bytes = request.body
@@ -381,12 +382,12 @@ class VictimSimulator:
                 break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
                 if attempt == attempts:
-                    app.logger.warning(f"{type(e).__name__}, skipping")
+                    app.logger.debug(f"{type(e).__name__}, skipping")
                 else:
-                    app.logger.warning(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
+                    app.logger.debug(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
                     time.sleep(self.retry_wait_time)
             except StaleElementReferenceException:
-                app.logger.warning("User input has gone stale, skipping")
+                app.logger.debug("User input has gone stale, skipping")
                 break
 
         app.logger.info(f"Attempting to input password: {password}")
@@ -409,12 +410,12 @@ class VictimSimulator:
                 break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
                 if attempt == attempts:
-                    app.logger.warning(f"{type(e).__name__}, skipping")
+                    app.logger.debug(f"{type(e).__name__}, skipping")
                 else:
-                    app.logger.warning(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
+                    app.logger.debug(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
                     time.sleep(self.retry_wait_time)
             except StaleElementReferenceException:
-                app.logger.warning("Password input has gone stale, skipping")
+                app.logger.debug("Password input has gone stale, skipping")
                 break
 
         try:
@@ -471,6 +472,6 @@ def submit():
 
 
 if __name__ == '__main__':
-    app.logger.setLevel(logging.DEBUG)
+    app.logger.setLevel(logging.INFO)
     app.logger.info("Starting app")
     app.run(debug=True, host="0.0.0.0", port=8080, threaded=False, processes=1)
