@@ -38,8 +38,39 @@ class Solution:
         self.html = html
         self.cookies = cookies or []
 
+class Exfiltration:
+    method: str
+    url: str
+    body: str
+    credential_types: List[str]
+
+    def __init__(self, method: str, url: str, body: str, credential_types: List[str]):
+        self.method = method
+        self.url = url
+        self.body = body
+        self.credential_types = credential_types
+
+    def to_dict(self):
+        return {
+            'method': self.method,
+            'url': self.url,
+            'body': self.body,
+            'credential_types': self.credential_types,
+        }
+
+    def __eq__(self, other):
+        if type(other) != Exfiltration:
+            return False
+
+        return (
+            self.method == other.method
+            and self.url == other.url
+            and self.body == other.body
+            and self.credential_types == other.credential_types
+        )
+
 class Result:
-    exfiltration : List[Dict[str, Any]]
+    exfiltration : List[Exfiltration]
     html : str
     solver_html : str
 
@@ -50,7 +81,7 @@ class Result:
 
     def to_dict(self):
         return {
-            'exfiltration': self.exfiltration,
+            'exfiltration': [exfil.to_dict() for exfil in self.exfiltration],
             'html': self.html,
             'solver_html': self.solver_html,
         }
@@ -125,8 +156,8 @@ class VictimSimulator:
     sel_username : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text'], input[type='email']")
     sel_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='password']")
     sel_username_or_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text'], input[type='email'], input[type='password']")
-    sel_continue : ClassVar[tuple[By, str]] = (By.XPATH, "//button[text()='Next']")
-    sel_submit : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit']")
+    sel_continue : ClassVar[tuple[By, str]] = (By.XPATH, "//button[text()='Next'] | //button[text()='Continue'] | //input[@type='submit' and @value='Next'] | //input[@type='submit' and @value='Continue']")
+    sel_submit : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit'], input[value='Next']")
 
     result : Result
 
@@ -233,7 +264,7 @@ class VictimSimulator:
             seleniumwire_options=seleniumwire_options,
         )
 
-        self.browser.set_page_load_timeout(10)
+        self.browser.set_page_load_timeout(15)
 
     def _generate_credentials(self) -> (str, str):
         """Generates random credentials as a tuple of (username, password)"""
@@ -290,7 +321,7 @@ class VictimSimulator:
             ]),
         }
 
-        def interceptor(request : Request, result : Result = self.result, logger = app.logger):
+        def interceptor(request : Request, exfiltration : List[Exfiltration] = self.result.exfiltration, logger = app.logger):
             url = request.url
             method = request.method
             logger.info(f"*** {method} {url}")
@@ -307,16 +338,23 @@ class VictimSimulator:
                         logger.info(f"Blocked {credential_type} exfiltration to: {url}")
                         exfiltrated_credentials.append(credential_type)
 
+                        # Replace creds with placeholders
+                        url_bytes = url_bytes.replace(needle, credential_type.upper().encode())
+                        body_bytes = body_bytes.replace(needle, credential_type.upper().encode())
+
                         # Stop looking for this credential type; it's already been found
                         break
 
             if exfiltrated_credentials:
-                result.exfiltration.append({
-                    'method': request.method,
-                    'url': url,
-                    'body': body_bytes.decode(),
-                    'credential_types': exfiltrated_credentials,
-                })
+                exfil = Exfiltration(
+                    request.method,
+                    url_bytes.decode(errors="ignore"),
+                    body_bytes.decode(errors="ignore"),
+                    exfiltrated_credentials,
+                )
+
+                if not exfil in exfiltration:
+                    exfiltration.append(exfil)
 
         self.browser.request_interceptor = interceptor
 
