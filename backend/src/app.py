@@ -153,6 +153,7 @@ class VictimSimulator:
     wait_time : ClassVar[int] = 15
     retry_wait_time : ClassVar[int] = 5
 
+    sel_bypass_content_protection : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "button.cf-btn[data-translate='dismiss_and_enter']")
     sel_username : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text'], input[type='email']")
     sel_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='password']")
     sel_username_or_password : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[type='text'], input[type='email'], input[type='password']")
@@ -359,11 +360,12 @@ class VictimSimulator:
         self.browser.request_interceptor = interceptor
 
     def _submit_credentials(self, username, password):
-        # Grab HTML before we start editing fields
-        html = self.result.html = self.browser.execute_script("return document.documentElement.outerHTML")
-
-        if "has banned your access based on your browser's signature" in html:
-            raise BannedError("Banned by CloudFlare")
+        try:
+            bypass_protection_btn = self.browser.find_element(*self.sel_bypass_content_protection)
+            app.logger.debug("Bypassing content protection screen")
+            bypass_protection_btn.click()
+        except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException):
+            pass
 
         try:
             app.logger.info(f"Waiting for user or password input field, max {self.wait_time} sec")
