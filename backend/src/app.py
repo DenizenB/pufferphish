@@ -242,7 +242,7 @@ class VictimSimulator:
         #options.add_argument('--headless')
 
         if user_agent:
-            options.add_argument(f'--user-agent="{user_agent}"')
+            options.add_argument(f'--user-agent={user_agent}')
 
         seleniumwire_options = {
             'request_storage': "memory",
@@ -406,7 +406,7 @@ class VictimSimulator:
                         continue_button = self.browser.find_element(*self.sel_continue)
                         app.logger.debug(f"Clicking continue button: {continue_button}")
                         continue_button.click()
-                    except:
+                    except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException):
                         pass
 
                 try:
@@ -460,7 +460,7 @@ class VictimSimulator:
             submit_button = self.browser.find_element(*self.sel_submit)
             app.logger.debug("Clicking submit button: {submit_button}")
             submit_button.click()
-        except NoSuchElementException:
+        except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException):
             pass
 
         # Wait for exfiltration, max 5 sec
