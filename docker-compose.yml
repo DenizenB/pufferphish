@@ -4,11 +4,11 @@ services:
     # DockerHub mirror flaresolverr/flaresolverr:latest
     image: flaresolverr/flaresolverr:latest
     environment:
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - LOG_HTML=${LOG_HTML:-false}
-      - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-none}
-      - TZ=Europe/London
       - PORT=8080
+      #- LOG_LEVEL=info
+      #- LOG_HTML=false
+      #- CAPTCHA_SOLVER=none
+      #- BROWSER_TIMEOUT=40000
     restart: unless-stopped
   backend:
     build: backend
