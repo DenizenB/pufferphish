@@ -161,15 +161,16 @@ class VictimSimulator:
     sel_submit : ClassVar[tuple[By, str]] = (By.CSS_SELECTOR, "input[value='Sign in'], input[value='Log in'], input[value='Login'], input[value='Continue'], input[value='Submit'], input[value='Next']")
 
     result : Result
-
     browser : Optional[uc.Chrome]
     solver : Flaresolverr
+    debug : bool
 
-    def __init__(self, solver : Flaresolverr):
+    def __init__(self, solver : Flaresolverr, debug : bool = False):
         self.solver = solver
         self.browser = None
 
         self.result = Result()
+        self.debug = debug
 
     def __enter__(self):
         if not VictimSimulator.virtual_display:
@@ -248,9 +249,10 @@ class VictimSimulator:
         seleniumwire_options = {
             'request_storage': "memory",
             'request_storage_max_size': 200,
-            'suppress_connection_errors': False,
             'verify_ssl': False,
             'ignore_http_methods': [], # Capture all methods, including OPTIONS
+            'enable_har': self.debug, # Store all requests in request.har
+            'suppress_connection_errors': not self.debug,
         }
 
         proxy = env.get('PROXY')
@@ -491,6 +493,7 @@ def submit():
 
     url = request.form.get('url')
     uploaded_file = request.files.get('html')
+    debug = request.form.get('debug', "").lower() == "true"
 
     if uploaded_file:
         visit_args['html'] = uploaded_file.read()
@@ -502,7 +505,7 @@ def submit():
     result = {}
     status = 200
 
-    with VictimSimulator(captcha_solver) as simulator:
+    with VictimSimulator(captcha_solver, debug) as simulator:
         try:
             simulator.visit(**visit_args)
         except BannedError as e:
@@ -515,6 +518,8 @@ def submit():
             status = 500
 
         result.update(simulator.result.to_dict())
+        if debug:
+            result['har'] = simulator.browser.har
 
         response = jsonify(result)
         response.status_code = status
