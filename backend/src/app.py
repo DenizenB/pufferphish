@@ -250,6 +250,7 @@ class VictimSimulator:
             'request_storage_max_size': 200,
             'suppress_connection_errors': False,
             'verify_ssl': False,
+            'ignore_http_methods': [], # Capture all methods, including OPTIONS
         }
 
         proxy = env.get('PROXY')
@@ -325,15 +326,24 @@ class VictimSimulator:
         def interceptor(request : Request, exfiltration : List[Exfiltration] = self.result.exfiltration, logger = app.logger):
             url = request.url
             method = request.method
-            logger.info(f"*** {method} {url}")
+            logger.debug(f"*** {method} {url}")
 
-            url_bytes = url.encode()
-            body_bytes = request.body
+            url_bytes: bytes = url.encode()
+            body: bytes = request.body
+            headers: List[tuple[bytes, bytes]] = [(k.encode(), v.encode()) for k, v in request.headers.items()]
+            websocket_messages: List[bytes] = [m.content if type(m.content) == bytes else m.content.encode() for m in request.ws_messages]
 
             exfiltrated_credentials = []
             for credential_type, needles in needles_by_creds.items():
                 for needle in needles:
-                    if needle in url_bytes or needle in body_bytes:
+                    is_exfiltration = (
+                        needle in url_bytes
+                        or needle in body
+                        or any(needle in k or needle in v for k, v in headers)
+                        or any(needle in message for message in websocket_messages)
+                    )
+
+                    if is_exfiltration:
                         request.abort()
 
                         logger.info(f"Blocked {credential_type} exfiltration to: {url}")
@@ -341,7 +351,7 @@ class VictimSimulator:
 
                         # Replace creds with placeholders
                         url_bytes = url_bytes.replace(needle, credential_type.upper().encode())
-                        body_bytes = body_bytes.replace(needle, credential_type.upper().encode())
+                        body = body.replace(needle, credential_type.upper().encode())
 
                         # Stop looking for this credential type; it's already been found
                         break
@@ -350,7 +360,7 @@ class VictimSimulator:
                 exfil = Exfiltration(
                     request.method,
                     url_bytes.decode(errors="ignore"),
-                    body_bytes.decode(errors="ignore"),
+                    body.decode(errors="ignore"),
                     exfiltrated_credentials,
                 )
 
