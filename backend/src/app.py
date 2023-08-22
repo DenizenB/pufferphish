@@ -328,7 +328,7 @@ class VictimSimulator:
         def interceptor(request : Request, exfiltration : List[Exfiltration] = self.result.exfiltration, logger = app.logger):
             url = request.url
             method = request.method
-            logger.debug(f"*** {method} {url}")
+            logger.info(f"*** {method} {url}")
 
             url_bytes: bytes = url.encode()
             body: bytes = request.body
@@ -442,6 +442,10 @@ class VictimSimulator:
                 app.logger.debug("User input has gone stale, skipping")
                 break
 
+        # Have we already spotted exfiltration?
+        if self.result.exfiltration:
+            return
+
         app.logger.info(f"Attempting to input password: {password}")
         for attempt in range(1, attempts+1):
             try:
@@ -477,11 +481,13 @@ class VictimSimulator:
         except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException):
             pass
 
+        # Have we already spotted exfiltration?
+        if self.result.exfiltration:
+            return
+
         # Wait for exfiltration, max 5 sec
         app.logger.debug("Waiting for 5 seconds to allow exfiltration")
         time.sleep(5)
-
-        app.logger.debug("We're done submitting credentials")
 
 
 app = Flask(__name__)
