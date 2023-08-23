@@ -252,7 +252,7 @@ class VictimSimulator:
             'verify_ssl': False,
             'ignore_http_methods': [], # Capture all methods, including OPTIONS
             'enable_har': self.debug, # Store all requests in request.har
-            'suppress_connection_errors': not self.debug,
+            'suppress_connection_errors': False,
         }
 
         proxy = env.get('PROXY')
@@ -434,12 +434,12 @@ class VictimSimulator:
                 break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
                 if attempt == attempts:
-                    app.logger.debug(f"{type(e).__name__}, skipping")
+                    app.logger.info(f"Failed to input username: {type(e).__name__}")
                 else:
                     app.logger.debug(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
                     time.sleep(self.retry_wait_time)
             except StaleElementReferenceException:
-                app.logger.debug("User input has gone stale, skipping")
+                app.logger.info("User input has gone stale, skipping")
                 break
 
         # Have we already spotted exfiltration?
@@ -466,12 +466,12 @@ class VictimSimulator:
                 break
             except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException) as e:
                 if attempt == attempts:
-                    app.logger.debug(f"{type(e).__name__}, skipping")
+                    app.logger.info(f"Failed to input password: {type(e).__name__}")
                 else:
                     app.logger.debug(f"{type(e).__name__}, retrying in {self.retry_wait_time} sec")
                     time.sleep(self.retry_wait_time)
             except StaleElementReferenceException:
-                app.logger.debug("Password input has gone stale, skipping")
+                app.logger.info("Password input has gone stale, skipping")
                 break
 
         try:
