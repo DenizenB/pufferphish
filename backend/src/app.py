@@ -240,6 +240,7 @@ class VictimSimulator:
         options.add_argument('--ignore-certificate-errors')
         options.add_argument('--ignore-ssl-errors')
         options.add_argument('--use-gl=swiftshader')
+        options.add_argument('--disable-site-isolation-trials') # fix for phishing lures that redirect to a blob: URI
 
         # Use a virtual display instead of headless, technique taken from FlareSolverr
         #options.add_argument('--headless')
