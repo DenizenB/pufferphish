@@ -97,7 +97,6 @@ class Flaresolverr:
         resp = r.json()
 
         if resp.get('status') != "ok":
-            app.logger.error("Got non-ok response from flaresolverr: " + r.text)
             raise FlaresolverrError(resp.get('message'))
 
         r.raise_for_status()
@@ -195,11 +194,13 @@ class VictimSimulator:
         return self._visit(url)
 
     def _visit(self, url : str, solve : bool = True):
+        solution = Solution()
         if solve:
-            # Use Flaresolverr in case there's a captcha
-            solution = self.solver.solve(url)
-        else:
-            solution = Solution()
+            try:
+                # Use Flaresolverr in case there's a captcha
+                solution = self.solver.solve(url)
+            except FlaresolverrError as e:
+                app.logger.error(f"FlareSolverr failed: {e}")
 
         self.result.solver_html = solution.html
 
