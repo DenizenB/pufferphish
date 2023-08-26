@@ -1,0 +1,6 @@
+requests
+flask
+pytest
+undetected-chromedriver
+selenium-wire
+xvfbwrapper
