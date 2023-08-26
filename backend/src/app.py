@@ -268,6 +268,7 @@ class VictimSimulator:
         self.browser = uc.Chrome(
             options=options,
             seleniumwire_options=seleniumwire_options,
+            driver_executable_path="/app/undetected_chromedriver",
         )
 
         self.browser.set_page_load_timeout(15)
@@ -537,4 +538,4 @@ def submit():
 if __name__ == '__main__':
     app.logger.setLevel(logging.INFO)
     app.logger.info("Starting app")
-    app.run(debug=True, host="0.0.0.0", port=8080, threaded=False, processes=1)
+    app.run(debug=True, host="0.0.0.0", port=8080)
