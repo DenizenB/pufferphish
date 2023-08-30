@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any, ClassVar
 import requests
 import seleniumwire.undetected_chromedriver as uc
 from flask import Flask, request, jsonify, abort
+from requests.exceptions import ReadTimeout
 from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException, TimeoutException, StaleElementReferenceException, ElementNotInteractableException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -199,7 +200,7 @@ class VictimSimulator:
             try:
                 # Use Flaresolverr in case there's a captcha
                 solution = self.solver.solve(url)
-            except FlaresolverrError as e:
+            except (FlaresolverrError, ReadTimeout) as e:
                 app.logger.error(f"FlareSolverr failed: {e}")
 
         self.result.solver_html = solution.html
