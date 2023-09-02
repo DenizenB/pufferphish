@@ -94,7 +94,7 @@ class Flaresolverr:
     def request(self, command, **data) -> Dict:
         data['cmd'] = command
 
-        r = requests.post(self.url, json=data, timeout=20)
+        r = requests.post(self.url, json=data)
         resp = r.json()
 
         if resp.get('status') != "ok":
@@ -121,7 +121,8 @@ class Flaresolverr:
         """
             Solves a captcha on the URL, if found, and returns the solution
         """
-        solution = self.get(url).get('solution') or {}
+        result = self.get(url, maxTimeout=20000)
+        solution = result.get('solution') or {}
 
         return Solution(
             user_agent=solution.get('userAgent'),
