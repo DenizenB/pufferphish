@@ -121,7 +121,7 @@ class Flaresolverr:
         """
             Solves a captcha on the URL, if found, and returns the solution
         """
-        result = self.get(url, maxTimeout=20000)
+        result = self.get(url, maxTimeout=30000)
         solution = result.get('solution') or {}
 
         return Solution(
